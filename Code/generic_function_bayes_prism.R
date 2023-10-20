@@ -18,13 +18,13 @@ library(survival)
 library(TCGAbiolinks)
 theme_set(theme_bw())
 
-
+CANCER_TYPE <- "COAD"
 # process bulk TCGA data --------------------------------------------------
 # Define your data download directory
 data_dir_bulk <- "Z:/Ayelet/bulk_TCGA"  # Change this to your preferred directory
-
+#data_dir_bulk <- file.path(data_dir_bulk,CANCER_TYPE)
 # Specify the project and other query parameters
-CANCER_TYPE <- "COAD"
+
 project <- paste0("TCGA-", CANCER_TYPE)
 
 # Create a query specifying the RNA-Seq data with the "STAR - Counts" workflow
