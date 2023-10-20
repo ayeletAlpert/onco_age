@@ -21,8 +21,7 @@ theme_set(theme_bw())
 CANCER_TYPE <- "COAD"
 # process bulk TCGA data --------------------------------------------------
 # Define your data download directory
-data_dir_bulk <- "Z:/Ayelet/bulk_TCGA"  # Change this to your preferred directory
-#data_dir_bulk <- file.path(data_dir_bulk,CANCER_TYPE)
+data_dir_bulk <- file.path("Z:/Ayelet/bulk_TCGA",CANCER_TYPE)
 # Specify the project and other query parameters
 
 project <- paste0("TCGA-", CANCER_TYPE)
@@ -83,11 +82,11 @@ for(dataset in datasets){
   }else{
     expression_matrix <- readMM(file.path(dataset, "Exp_data_UMIcounts.mtx"))
     
-    cellular_annotations <- read.csv(file = file.path(dataset, "Cells.csv"))
-    cellular_annotations <- cellular_annotations[cellular_annotations$cell_type != "",]
-    
     #assign cell names to columns:
+    cellular_annotations <- read.csv(file = file.path(dataset, "Cells.csv"))
     colnames(expression_matrix) <- cellular_annotations[,"cell_name"]
+    
+    cellular_annotations <- cellular_annotations[cellular_annotations$cell_type != "",]
     expression_matrix <- expression_matrix[,cellular_annotations[,"cell_name"]]
     
     #assign gene names to rows:
@@ -99,26 +98,31 @@ for(dataset in datasets){
     expression_matrix <- expression_matrix[,colSums(expression_matrix) > 0]
     
     #functions for translation gene symbols:
-    res <- mapIds(org.Hs.eg.db, keys <- row.names(expression_matrix), column = "SYMBOL", keytype = "ENSEMBL", multiVals = "first")
-    ensembl2sym <- function(ensembl){return(res[ensembl])}
+    res <- mapIds(org.Hs.eg.db, keys <- row.names(expression_matrix), column = "ENSEMBL", keytype = "SYMBOL", multiVals = "first")
+    sym2ensembl <- function(sym){return(res[sym])}
     res_op <- names(res)
     names(res_op) <- res
-    sym2ensembl <- function(sym){return(res_op[sym])}
+    ensembl2sym <- function(ensembl){return(res_op[ensembl])}
     
     #translate the ensemble genes to gene symbols:
     count_data <- readRDS(file = file.path(data_dir_bulk, paste0(CANCER_TYPE, "_count_data.rds")))
     rownames(count_data) <- ensembl2sym(rownames(count_data))
+    count_data <- count_data[!is.na(rownames(count_data)),]
     
     #get the shared genes in the bulk and scRNAseq:
-    shared_genes <- intersect(colnames(expression_matrix), rownames(count_data))
+    shared_genes <- intersect(rownames(expression_matrix), rownames(count_data))
     count_data <- count_data[shared_genes,]
-    expression_matrix <- expression_matrix[,shared_genes]
+    expression_matrix <- as.matrix(expression_matrix[shared_genes,])
+    
+    #transpose expression data of both bulk and sc data:
+    count_data <- t(count_data)
+    expression_matrix <- t(expression_matrix)
     
     #get annotations:
     cell.type.labels <- cellular_annotations[,'cell_type']
     cell.state.labels <- cellular_annotations[,'cell_type']
     
-    sc.dat.filtered <- cleanup.genes (input=sc_dat,
+    sc.dat.filtered <- cleanup.genes (input=expression_matrix,
                                       input.type="count.matrix",
                                       species="hs",
                                       gene.group=c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY") ,
@@ -141,8 +145,10 @@ for(dataset in datasets){
       outlier.fraction=0.1,
     )
     
-    bp_res <- InstaPrism(input_type = 'prism',prismObj = myPrism)
+    bp_res <- InstaPrism(input_type = 'prism', prismObj = myPrism, convergence.plot = TRUE, n.iter = 1000)
+    
+    # bp_res <- InstaPrism(input_type = 'prism',prismObj = myPrism)
 
-    saveRDS(bp.res,file = file.path(dataset, "bp_res.rds"))
+    saveRDS(bp_res,file = file.path(dataset, "bp_res.rds"))
   }
 }
