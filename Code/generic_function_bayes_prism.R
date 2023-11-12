@@ -1,14 +1,14 @@
 rm(list = ls())
 memory.limit(size = 100000)
-# Load the readr library
+# Load the required libraries
 library(readr)
 library(Matrix)
 library(Seurat)
-require(Biobase)
+library(Biobase)
 library(AnnotationDbi)
 library(org.Hs.eg.db)
-require(stringr)
-require(ggplot2)
+library(stringr)
+library(ggplot2)
 library(BayesPrism)
 library(devtools)
 library(matrixStats)
@@ -16,15 +16,32 @@ library(SummarizedExperiment)
 library(InstaPrism)
 library(survival)
 library(TCGAbiolinks)
+library(estimate)
 theme_set(theme_bw())
-# "BRCA" "CHOL" "COAD" "HNSC" "KIRC" "OV"   "PAAD" "PRAD" "SARC"
-CANCER_TYPES <- c("HNSC" ,"KIRC" ,"OV" ,  "PAAD" ,"PRAD" ,"SARC")
+
+CANCER_TYPES <- c("BRCA","CHOL","COAD","HNSC" ,"KIRC" ,"OV" ,  "PAAD" ,"PRAD" ,"SARC")
+# CANCER_TYPES <- c("PRAD" ,"SARC")
+
 for (CANCER_TYPE in CANCER_TYPES) {
   # process bulk TCGA data --------------------------------------------------
   # Define your data download directory
-  data_dir_bulk <- file.path("Z:/Ayelet/bulk_TCGA",CANCER_TYPE)
-  # Specify the project and other query parameters
+ 
+  # data_dir_bulk <- file.path("C:/Users/ShenorLab/Documents/MDPhD/oncology/temp",CANCER_TYPE)
+  data_dir_bulk <- file.path("D:/Ayelet/bulk_TCGA",CANCER_TYPE)
   
+  # Check if the directory exists
+  if (!dir.exists(data_dir_bulk)) {
+    # If it doesn't exist, create the directory
+    dir.create(data_dir_bulk, recursive = TRUE)
+    cat(paste("Directory", data_dir_bulk, "created.\n"))
+  } else {
+    cat(paste("Directory", data_dir_bulk, "already exists.\n"))
+  }
+  files_in_dir <- list.files(data_dir_bulk, full.names = TRUE)
+  
+  if (length(files_in_dir)<3)
+  {
+  # Specify the project and other query parameters
   project <- paste0("TCGA-", CANCER_TYPE)
   
   # Create a query specifying the RNA-Seq data with the "STAR - Counts" workflow
@@ -35,26 +52,48 @@ for (CANCER_TYPE in CANCER_TYPES) {
     workflow.type = "STAR - Counts",
     data.type = "Gene Expression Quantification")
   
-  # Download the data with the correct query
-  GDCdownload(query,
-              method = "api",
-              directory = data_dir_bulk,
-              files.per.chunk = 10)
+  # Check if download_dir exists
+  if (dir.exists(data_dir_bulk)) {
+    # List files in the directory
+    files_in_dir <- list.files(data_dir_bulk, full.names = TRUE)
+    
+    # Check if the directory contains at least one file
+    if (length(files_in_dir) == 0) {
+      # Run GDCdownload
+      GDCdownload(query, method = "api", directory = data_dir_bulk, files.per.chunk = 50)
+    } else {
+      cat("The directory is already exist\n")
+    }
+  } else {
+    cat("The directory does not exist.\n")
+  }
   
-  # Define the directory for the specific case (e.g., TCGA-COAD)
-  case_dir <- file.path(data_dir_bulk, "TCGA", CANCER_TYPE)
+
+    # Use GDCprepare to prepare the data for the specified case and data type
+    RnaseqSE <- GDCprepare(query = query, directory = data_dir_bulk)
+    
+    saveRDS(RnaseqSE, file = file.path(data_dir_bulk, paste0(CANCER_TYPE, "_TCGA.rds")))
+    
+    count_data <- assays(RnaseqSE)$unstranded
+    rownames(count_data) <- str_replace(rownames(count_data), "\\.[0-9]+","")
+    saveRDS(count_data, file = file.path(data_dir_bulk, paste0(CANCER_TYPE, "_count_data.rds")))  
   
-  # Use GDCprepare to prepare the data for the specified case and data type
-  RnaseqSE <- GDCprepare(query = query, directory = case_dir)
+  }
   
-  saveRDS(RnaseqSE, file = file.path(data_dir_bulk, paste0(CANCER_TYPE, "_TCGA.rds")))
   
-  count_data <- assays(RnaseqSE)$unstranded
-  rownames(count_data) <- str_replace(rownames(count_data), "\\.[0-9]+","")
-  saveRDS(count_data, file = file.path(data_dir_bulk, paste0(CANCER_TYPE, "_count_data.rds")))
+  # path_sipped_file <- file.path("C:/Users/ShenorLab/Documents/MDPhD/oncology/temp/zipped_file", CANCER_TYPE)
+  # 
+  # # Check if the directory exists
+  # if (!dir.exists(path_sipped_file)) {
+  #   # If it doesn't exist, create the directory
+  #   dir.create(path_sipped_file, recursive = TRUE)
+  #   cat(paste("Directory", path_sipped_file, "created.\n"))
+  # } else {
+  #   cat(paste("Directory", path_sipped_file, "already exists.\n"))
+  # }
   
   # read scRNAseq data ------------------------------------------------------
-  data_dir_sc_data <- file.path("Z:/Ayelet/scRNASeq_Oncology/scRNAseq", CANCER_TYPE, "unzipped_files")
+  data_dir_sc_data <- file.path("D:/Ayelet/scRNASeq_Oncology/scRNAseq", CANCER_TYPE, "unzipped_files")
   
   # Check if the directory exists
   if (!dir.exists(data_dir_sc_data)) {
@@ -66,7 +105,7 @@ for (CANCER_TYPE in CANCER_TYPES) {
   }
   
   #unzip scRNAseq files:
-  zipped_files <- list.files(file.path("Z:/Ayelet/scRNASeq_Oncology/scRNAseq", CANCER_TYPE), pattern = "\\.zip$", full.names = TRUE)
+  zipped_files <- list.files(file.path("D:/Ayelet/scRNASeq_Oncology/scRNAseq", CANCER_TYPE), pattern = "\\.zip$", full.names = TRUE)
   
   for(dataset in zipped_files){
     zipped_files_name <- str_extract(dataset, "[A-Za-z]+[0-9]+")
@@ -78,13 +117,16 @@ for (CANCER_TYPE in CANCER_TYPES) {
   # get the relevant scRNAseq datasets --------------------------------------
   datasets <- list.files(data_dir_sc_data, full.names = TRUE)
   for(dataset in datasets){
-    if(sum(str_detect(list.files(dataset), "counts")) == 0){
-      cat("no count data")
+    cellular_annotations <- read.csv(file = file.path(dataset, "Cells.csv"))
+    
+    if(sum(str_detect(list.files(dataset), "counts")) == 0 | sum(cellular_annotations$cell_type == "Malignant") ==  0){
+      cat("no count data or malignant cell ID")
     }else{
-      expression_matrix <- readMM(file.path(dataset, "Exp_data_UMIcounts.mtx"))
+      
+      expression_matrix <- readMM(list.files(dataset, full.names = T)[str_detect(list.files(dataset), "counts")])
+      # expression_matrix <- readMM(file.path(dataset, "Exp_data_UMIcounts.mtx"))
       
       #assign cell names to columns:
-      cellular_annotations <- read.csv(file = file.path(dataset, "Cells.csv"))
       colnames(expression_matrix) <- cellular_annotations[,"cell_name"]
       
       cellular_annotations <- cellular_annotations[cellular_annotations$cell_type != "",]
@@ -150,8 +192,69 @@ for (CANCER_TYPE in CANCER_TYPES) {
       
       # bp_res <- InstaPrism(input_type = 'prism',prismObj = myPrism)
       
+      # Check if the directory exists
+      if (!dir.exists(dataset)) {
+        # If it doesn't exist, create the directory
+        dir.create(dataset, recursive = TRUE)
+        cat(paste("Directory", dataset, "created.\n"))
+      } else {
+        cat(paste("Directory", dataset, "already exists.\n"))
+      }
+      
       saveRDS(bp_res,file = file.path(dataset, "bp_res.rds"))
     }
   }
-  
 }
+
+# -----------------------------------------------------
+# CHECK THE CORREALTION BETWEEN THE PERCENTAGE OF MALIGNANT CELLS AND TUMOR PURITY AS DEFINED BY TCGA DATABASE
+# -----------------------------------------------------
+parent_dir_scRNAseq <- "D:/Ayelet/scRNASeq_Oncology/scRNAseq"
+parent_dir_bulk <- "D:/Ayelet/bulk_TCGA"
+
+#process data purity from TCGA from the manuscript: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4671203/#S1
+TCGA_purity <- read.csv(file = "D:/Ayelet/bulk_TCGA/estimate_purity_TCGA_samples.csv")
+rownames(TCGA_purity) <- TCGA_purity$Sample.ID
+
+#correlate the tumor purity obtained by different methodologies with the one obtained by bayes prism:
+bpres_files <- list.files(parent_dir_scRNAseq, pattern = "bp_res.rds", recursive = TRUE, full.names = TRUE)
+cor_methodologies_malignant_cells <- do.call('rbind', lapply(bpres_files, function(bp_res_file){
+  print(bp_res_file)
+  
+  #extract the relevant cancer type:
+  path_elements <- unlist(str_split(str_replace(bp_res_file, parent_dir_scRNAseq, ""), "/"))
+  cancer_type <- path_elements[which(path_elements != "")[1]]
+  data_set <- path_elements[which(path_elements != "")[3]]
+  
+  #exclude sarcoma samples:
+  if(cancer_type == "SARC"){return(NULL)}
+  
+  #get the bp_res data:
+  bp_res <- readRDS(file = bp_res_file)
+  percentage_malig_cells <- bp_res@Post.ini.cs@theta["Malignant",]
+  
+  if(sum(gsub("^((?:[^-]+-){3}[^-]+).*", "\\1", names(percentage_malig_cells), perl = TRUE) %in% TCGA_purity[,"Sample.ID"]) == 0){
+    ESTIMATE_purity <- read.table(file = file.path(parent_dir_bulk, paste0("ESTIMATE_SCORE_", cancer_type, ".txt")), header = T, row.names = 1)
+    rownames(ESTIMATE_purity) <- paste0(rownames(ESTIMATE_purity), "A")
+    return(data.frame(cancer_type = cancer_type,
+                      data_set = data_set,
+                      num_cells = nrow(bp.res@Post.ini.cs@theta),
+                      method = "ESTIMATE",
+                      corr_prop = cor(ESTIMATE_purity[gsub("^((?:[^-]+-){3}[^-]+).*", "\\1", names(percentage_malig_cells), perl = TRUE), "ESTIMATE_score"], 
+                                      bp_res@Post.ini.cs@theta["Malignant",], use = "complete.obs", method = "spearman")))
+    
+  }else{
+    #get the tumor purity obtained by the different methodologies:
+    methodologies <- c("ESTIMATE", "ABSOLUTE", "LUMP", "IHC")
+    cor_methodologies <- do.call('rbind', lapply(methodologies, function(method){
+      print(method)
+      if(sum(!is.na(TCGA_purity[gsub("^((?:[^-]+-){3}[^-]+).*", "\\1", names(percentage_malig_cells), perl = TRUE),method])) == 0){return(NULL)}
+      return(data.frame(cancer_type = cancer_type,
+                        data_set = data_set,
+                        num_cells = nrow(bp.res@Post.ini.cs@theta),
+                        method = method,
+                        corr_prop = cor(TCGA_purity[gsub("^((?:[^-]+-){3}[^-]+).*", "\\1", names(percentage_malig_cells), perl = TRUE),method], 
+                                        bp_res@Post.ini.cs@theta["Malignant",], use = "complete.obs", method = "spearman")))
+    }))
+  }
+}))
