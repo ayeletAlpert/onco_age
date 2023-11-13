@@ -77,20 +77,7 @@ for (CANCER_TYPE in CANCER_TYPES) {
     count_data <- assays(RnaseqSE)$unstranded
     rownames(count_data) <- str_replace(rownames(count_data), "\\.[0-9]+","")
     saveRDS(count_data, file = file.path(data_dir_bulk, paste0(CANCER_TYPE, "_count_data.rds")))  
-  
   }
-  
-  
-  # path_sipped_file <- file.path("C:/Users/ShenorLab/Documents/MDPhD/oncology/temp/zipped_file", CANCER_TYPE)
-  # 
-  # # Check if the directory exists
-  # if (!dir.exists(path_sipped_file)) {
-  #   # If it doesn't exist, create the directory
-  #   dir.create(path_sipped_file, recursive = TRUE)
-  #   cat(paste("Directory", path_sipped_file, "created.\n"))
-  # } else {
-  #   cat(paste("Directory", path_sipped_file, "already exists.\n"))
-  # }
   
   # read scRNAseq data ------------------------------------------------------
   data_dir_sc_data <- file.path("D:/Ayelet/scRNASeq_Oncology/scRNAseq", CANCER_TYPE, "unzipped_files")
@@ -238,7 +225,7 @@ cor_methodologies_malignant_cells <- do.call('rbind', lapply(bpres_files, functi
     rownames(ESTIMATE_purity) <- paste0(rownames(ESTIMATE_purity), "A")
     return(data.frame(cancer_type = cancer_type,
                       data_set = data_set,
-                      num_cells = nrow(bp.res@Post.ini.cs@theta),
+                      num_cells = nrow(bp_res@Post.ini.cs@theta),
                       method = "ESTIMATE",
                       corr_prop = cor(ESTIMATE_purity[gsub("^((?:[^-]+-){3}[^-]+).*", "\\1", names(percentage_malig_cells), perl = TRUE), "ESTIMATE_score"], 
                                       bp_res@Post.ini.cs@theta["Malignant",], use = "complete.obs", method = "spearman")))
@@ -251,10 +238,88 @@ cor_methodologies_malignant_cells <- do.call('rbind', lapply(bpres_files, functi
       if(sum(!is.na(TCGA_purity[gsub("^((?:[^-]+-){3}[^-]+).*", "\\1", names(percentage_malig_cells), perl = TRUE),method])) == 0){return(NULL)}
       return(data.frame(cancer_type = cancer_type,
                         data_set = data_set,
-                        num_cells = nrow(bp.res@Post.ini.cs@theta),
+                        num_cells = nrow(bp_res@Post.ini.cs@theta),
                         method = method,
                         corr_prop = cor(TCGA_purity[gsub("^((?:[^-]+-){3}[^-]+).*", "\\1", names(percentage_malig_cells), perl = TRUE),method], 
                                         bp_res@Post.ini.cs@theta["Malignant",], use = "complete.obs", method = "spearman")))
     }))
   }
+}))
+
+#choose per cancer type the optimal deconvolution scRNAseq dataset:
+cancer_types <- unique(cor_methodologies_malignant_cells$cancer_type)
+optimal_datasets_per_cancer_type <- do.call('rbind', lapply(cancer_types, function(cancer){
+  subset_cor_values <- subset(cor_methodologies_malignant_cells, method == "ESTIMATE" & cancer_type == cancer)
+  return(subset_cor_values[which.max(abs(subset_cor_values$corr_prop)),])
+}))
+
+#get the cell types chosen per optimal dataset:
+cell_types_per_cancer <- lapply(cancer_types, function(cancer){
+  chosen_dataset <- optimal_datasets_per_cancer_type$data_set[optimal_datasets_per_cancer_type$cancer_type == cancer]
+  
+  #get the bp_res file:
+  bp_res <- readRDS(file = file.path(parent_dir_scRNAseq, cancer, "unzipped_files", chosen_dataset, "bp_res.rds"))
+  
+  return(rownames(bp_res@Post.ini.cs@theta))
+})
+names(cell_types_per_cancer) <- cancer_types
+
+#association with age & outcome:
+p_imm_cell_age_surv <- do.call('rbind', lapply(cancer_types, function(cancer){
+  
+  print(cancer)
+  
+  #read bulk data:
+  bulk_data <- readRDS(RnaseqSE, file = file.path("D:/Ayelet/bulk_TCGA", cancer, paste0(cancer, "_TCGA.rds")))
+  
+  #extract only the relevant samples (non-healthy, MSS):
+  if(sum(colnames(colData(bulk_data)) == "paper_MSI_status") > 0){
+    rel_samples <- colnames(bulk_data)[bulk_data$definition != "Solid Tissue Normal" & !(is.na(bulk_data$paper_MSI_status) | bulk_data$paper_MSI_status == "MSI-H") ]
+  }else{
+    rel_samples <- colnames(bulk_data)[bulk_data$definition != "Solid Tissue Normal"]
+  }
+  
+  #read bp_res:
+  chosen_dataset <- optimal_datasets_per_cancer_type$data_set[optimal_datasets_per_cancer_type$cancer_type == cancer]
+  bp_res <- readRDS(file = file.path(parent_dir_scRNAseq, cancer, "unzipped_files", chosen_dataset, "bp_res.rds"))
+  
+  #calculate the frequency of immune cells alone:
+  IMM_CELLS <- c("T_cell", "Macrophage", "B_cell", "NK_cell", "Myeloid", "Monocyte", "Dendritic")
+  freq_all_cells <- bp_res@Post.ini.cs@theta[,rel_samples]
+  freq_imm_cells <- bp_res@Post.ini.cs@theta[rownames(bp_res@Post.ini.cs@theta) %in% IMM_CELLS, rel_samples]
+  freq_imm_cells <- apply(freq_imm_cells,2,function(x){return(x/sum(x))})
+  
+  #association of immune cell types with age:
+  p_vals_age_imm <- apply(freq_imm_cells, 1, function(x){
+    lm_res <- summary(lm(log(x) ~ colData(bulk_data)[rel_samples,'age_at_diagnosis']))
+    return(coef(lm_res)[2,4])
+  })
+  
+  plot(colData(bulk_data)[rel_samples,'age_at_diagnosis'], log(freq_all_cells["Dendritic",]))
+  
+  p_vals_age_all <- apply(freq_all_cells, 1, function(x){
+    lm_res <- summary(lm(x ~ colData(bulk_data)[rel_samples,'age_at_diagnosis']))
+    return(coef(lm_res)[2,4])
+  })
+  
+  # correlation of cell type abundance with survival ------------------------
+  surv_data <- cbind(colData(bulk_data)[rel_samples, c("days_to_last_follow_up", "vital_status", "days_to_death", "ajcc_pathologic_stage", "age_at_diagnosis")],
+                     t(freq_imm_cells))
+  surv_data$stage_short <- str_extract(surv_data$ajcc_pathologic_stage, "[I]+V*")
+  surv_data$surv_state <- surv_data$vital_status == "Dead"
+  surv_data$TTE <- apply(surv_data,1,function(x){return(max(as.numeric(x['days_to_death']), as.numeric(x['days_to_last_follow_up']), na.rm = T))})
+  
+  sum(is.infinite(surv_data[,c("surv_state")]))
+  surv_data <- surv_data[!is.na(surv_data$surv_state) & !is.na(surv_data$TTE) & !is.na(surv_data$stage_short) & !is.infinite(surv_data$TTE),]
+  
+  p_abundance_cell_types_survival <- do.call('rbind', lapply(names(p_vals_age_imm), function(cell_type){
+    print(cell_type)
+    cox <- coxph(Surv(surv_data$TTE, surv_data$surv_state) ~ surv_data$stage_short + surv_data$age_at_diagnosis + surv_data[,cell_type])
+    cox_res <- summary(cox)
+    return(data.frame(cell_type = cell_type, p_surv = coef(cox_res)[nrow(coef(cox_res)),5], dir = sign(coef(cox_res)[nrow(coef(cox_res)),1])))
+  }))
+  
+  p_abundance_cell_types_survival$p_age <- p_vals_age_imm
+  
+  return(data.frame(cancer_type = cancer, p_abundance_cell_types_survival))
 }))
