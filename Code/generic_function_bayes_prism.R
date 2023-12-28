@@ -198,7 +198,6 @@ for (CANCER_TYPE in CANCER_TYPES) {
 # -----------------------------------------------------
 parent_dir_scRNAseq <- "D:/Ayelet/scRNASeq_Oncology/scRNAseq"
 parent_dir_bulk <- "D:/Ayelet/bulk_TCGA"
-
 #process data purity from TCGA from the manuscript: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4671203/#S1
 TCGA_purity <- read.csv(file = "D:/Ayelet/bulk_TCGA/estimate_purity_TCGA_samples.csv")
 rownames(TCGA_purity) <- TCGA_purity$Sample.ID
@@ -265,6 +264,8 @@ cell_types_per_cancer <- lapply(cancer_types, function(cancer){
 names(cell_types_per_cancer) <- cancer_types
 
 #association with age & outcome:
+cancer_types <- c("COAD","HNSC","KIRC","OV")
+
 p_imm_cell_age_surv <- do.call('rbind', lapply(cancer_types, function(cancer){
   
   print(cancer)
@@ -284,10 +285,18 @@ p_imm_cell_age_surv <- do.call('rbind', lapply(cancer_types, function(cancer){
   bp_res <- readRDS(file = file.path(parent_dir_scRNAseq, cancer, "unzipped_files", chosen_dataset, "bp_res.rds"))
   
   #calculate the frequency of immune cells alone:
-  IMM_CELLS <- c("T_cell", "Macrophage", "B_cell", "NK_cell", "Myeloid", "Monocyte", "Dendritic")
+  IMM_CELLS <- c("T_cell", "Macrophage", "B_cell", "NK_cell", "Myeloid", "Monocyte", "Dendritic", "Lymphoid")
   freq_all_cells <- bp_res@Post.ini.cs@theta[,rel_samples]
   freq_imm_cells <- bp_res@Post.ini.cs@theta[rownames(bp_res@Post.ini.cs@theta) %in% IMM_CELLS, rel_samples]
   freq_imm_cells <- apply(freq_imm_cells,2,function(x){return(x/sum(x))})
+  
+  #ratios between cell types:
+  imm_cells_comb <- t(combn(rownames(freq_imm_cells),2))
+  freq_imm_cells_ratio <- matrix(NA, nrow(imm_cells_comb), ncol(freq_imm_cells))
+  for(i in 1:nrow(imm_cells_comb)){
+    freq_imm_cells_ratio[i,] <- freq_imm_cells[imm_cells_comb[i,1],]/freq_imm_cells[imm_cells_comb[i,2],]
+  }
+  rownames(freq_imm_cells_ratio) <- paste0(imm_cells_comb[,1], "_", imm_cells_comb[,2])
   
   #association of immune cell types with age:
   p_vals_age_imm <- apply(freq_imm_cells, 1, function(x){
@@ -295,17 +304,17 @@ p_imm_cell_age_surv <- do.call('rbind', lapply(cancer_types, function(cancer){
     return(coef(lm_res)[2,4])
   })
   
-  plot(colData(bulk_data)[rel_samples,'age_at_diagnosis'], log(freq_all_cells["Dendritic",]))
-  
-  p_vals_age_all <- apply(freq_all_cells, 1, function(x){
+  p_vals_age_ratio <- apply(freq_imm_cells_ratio, 1, function(x){
     lm_res <- summary(lm(x ~ colData(bulk_data)[rel_samples,'age_at_diagnosis']))
     return(coef(lm_res)[2,4])
   })
   
   # correlation of cell type abundance with survival ------------------------
-  surv_data <- cbind(colData(bulk_data)[rel_samples, c("days_to_last_follow_up", "vital_status", "days_to_death", "ajcc_pathologic_stage", "age_at_diagnosis")],
-                     t(freq_imm_cells))
-  surv_data$stage_short <- str_extract(surv_data$ajcc_pathologic_stage, "[I]+V*")
+  # stage_col_name <- colnames(colData(bulk_data))[str_detect(colnames(colData(bulk_data)), "stage") & !(str_detect(colnames(colData(bulk_data)), "paper"))]
+  stage_col_name <- colnames(colData(bulk_data))[str_detect(colnames(colData(bulk_data)), "ajcc_pathologic_stage|figo_stage|primary_gleason_grade")]
+  surv_data <- cbind(colData(bulk_data)[rel_samples, c("days_to_last_follow_up", "vital_status", "days_to_death", stage_col_name, "age_at_diagnosis")],
+                     t(freq_imm_cells), t(freq_imm_cells_ratio))
+  surv_data$stage_short <- str_extract(surv_data[,stage_col_name], "[I]+V*")
   surv_data$surv_state <- surv_data$vital_status == "Dead"
   surv_data$TTE <- apply(surv_data,1,function(x){return(max(as.numeric(x['days_to_death']), as.numeric(x['days_to_last_follow_up']), na.rm = T))})
   
@@ -321,5 +330,15 @@ p_imm_cell_age_surv <- do.call('rbind', lapply(cancer_types, function(cancer){
   
   p_abundance_cell_types_survival$p_age <- p_vals_age_imm
   
-  return(data.frame(cancer_type = cancer, p_abundance_cell_types_survival))
+  #ratios:
+  p_abundance_cell_types_ratio_survival <- do.call('rbind', lapply(names(p_vals_age_ratio), function(cell_type_ratio){
+    print(cell_type)
+    cox <- coxph(Surv(surv_data$TTE, surv_data$surv_state) ~ surv_data$stage_short + surv_data$age_at_diagnosis + surv_data[,cell_type_ratio])
+    cox_res <- summary(cox)
+    return(data.frame(cell_type = cell_type_ratio, p_surv = coef(cox_res)[nrow(coef(cox_res)),5], dir = sign(coef(cox_res)[nrow(coef(cox_res)),1])))
+  }))
+  
+  p_abundance_cell_types_ratio_survival$p_age <- p_vals_age_ratio
+  
+  return(data.frame(cancer_type = cancer, rbind(p_abundance_cell_types_survival, p_abundance_cell_types_ratio_survival)))
 }))

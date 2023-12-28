@@ -28,9 +28,19 @@ Kim_Lee_cell_annot <- Kim_Lee_cell_annot[colnames(scRNAseq_data_Kim_Lee),]
 Kim_Lee_cell_annot <- Kim_Lee_cell_annot[!is.na(Kim_Lee_cell_annot$Cell_subtype),]
 saveRDS(Kim_Lee_cell_annot, file = "~/MDPhD/oncology/BayesPrismLUAD/Data/Kim_Lee_cell_annot.rds")
 
-Kim_Lee_cell_annot= readRDS( file = "~/MDPhD/oncology/BayesPrismLUAD/Data/Kim_Lee_cell_annot.rds")
+Kim_Lee_cell_annot <- readRDS( file = "~/MDPhD/oncology/BayesPrismLUAD/Data/Kim_Lee_cell_annot.rds")
 
 
+# MUTATION DATA -----------------------------------------------------------
+query <- GDCquery(project = "TCGA-LUAD", data.category = "Simple Nucleotide Variation", 
+                  data.type = "Masked Somatic Mutation", legacy = FALSE)
+
+# Download the data
+GDCdownload(query)
+
+# Prepare the downloaded data
+mutation_data <- GDCprepare(query)
+saveRDS(mutation_data, file = "~/MDPhD/oncology/BayesPrismLUAD/Data/mutation_data.rds")
 
 # scRNAseq data - LUAD - normalized data ----------------------------------
 # scRNAseq_data <- readRDS(file = file.path(data_dir, "core_atlas.rds"))
@@ -90,113 +100,23 @@ count_data <- t(count_data)
 sc_dat <- sc_dat[,shared_genes]
 sc_dat <- sc_dat[rownames(Kim_Lee_cell_annot),]
 
-cell.type.labels <- Kim_Lee_cell_annot[rownames(sc_dat),'Cell_type']
-cell.state.labels <- Kim_Lee_cell_annot[rownames(sc_dat),'Cell_type']
+# For coarse cell types:
+# cell.type.labels <- Kim_Lee_cell_annot[rownames(sc_dat),'Cell_type']
+# cell.state.labels <- Kim_Lee_cell_annot[rownames(sc_dat),'Cell_type']
 
-sc.dat.filtered <- cleanup.genes (input=sc_dat,
-                                  input.type="count.matrix",
-                                  species="hs",
-                                  gene.group=c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY") ,
-                                  exp.cells=5)
-
-plot.bulk.vs.sc (sc.input = sc.dat.filtered,
-                 bulk.input = count_data)
-
-sc.dat.filtered.pc <- select.gene.type (sc.dat.filtered,
-                                        gene.type = "protein_coding")
-
-myPrism <- new.prism(
-  reference=sc.dat.filtered.pc,
-  mixture=count_data,
-  input.type="count.matrix",
-  cell.type.labels = cell.type.labels,
-  cell.state.labels = cell.state.labels,
-  key="Epithelial cells",
-  outlier.cut=0.01,
-  outlier.fraction=0.1,
-)
-
-# saveRDS(myPrism, file = "~/MDPhD/oncology/BayesPrismLUAD/Data/my_prism_luad.rds")
-
-# BAYES PRISM - HIGHER RESOLUTION CELL TYPES -------------------------------------------------------------
-sc_dat <- readRDS(file = "~/MDPhD/oncology/BayesPrismLUAD/Data/GSE131907_Lung_Cancer_raw_UMI_matrix_filter.rds")
-count_data <- readRDS(file = "~/MDPhD/oncology/scRNAseqLUAD/savedData/bulk_count_data.rds")
-Kim_Lee_cell_annot <- readRDS( file = "~/MDPhD/oncology/BayesPrismLUAD/Data/Kim_Lee_cell_annot.rds")
-
-shared_genes <- intersect(colnames(sc_dat), rownames(count_data))
-count_data <- count_data[shared_genes,]
-count_data <- t(count_data)
-sc_dat <- sc_dat[,shared_genes]
-sc_dat <- sc_dat[rownames(Kim_Lee_cell_annot),]
-
-cell.type.labels <- Kim_Lee_cell_annot[rownames(sc_dat),'Cell_type']
-cell.state.labels <- Kim_Lee_cell_annot[rownames(sc_dat),'Cell_type']
-
-sc.dat.filtered <- cleanup.genes (input=sc_dat,
-                                  input.type="count.matrix",
-                                  species="hs",
-                                  gene.group=c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY") ,
-                                  exp.cells=5)
-
-plot.bulk.vs.sc (sc.input = sc.dat.filtered,
-                 bulk.input = count_data)
-
-sc.dat.filtered.pc <- select.gene.type (sc.dat.filtered,
-                                        gene.type = "protein_coding")
-
-myPrism <- new.prism(
-  reference=sc.dat.filtered.pc,
-  mixture=count_data,
-  input.type="count.matrix",
-  cell.type.labels = cell.type.labels,
-  cell.state.labels = cell.state.labels,
-  key="Epithelial cells",
-  outlier.cut=0.01,
-  outlier.fraction=0.1,
-)
-
-# saveRDS(myPrism, file = "~/MDPhD/oncology/BayesPrismLUAD/Data/my_prism_luad.rds")
-
-# RUN FAST BAYESPRISM -----------------------------------------------------
-myPrism <- readRDS(file = "~/MDPhD/oncology/BayesPrismLUAD/Data/my_prism_luad.rds")
-bp.res <- InstaPrism(input_type = 'prism',prismObj = myPrism)
-#bp.res <- run.prism(prism = myPrism, n.cores=8)
-saveRDS(bp.res,file = "~/MDPhD/oncology/BayesPrismLUAD/Data/bp_res.rds")
-
-
-# CELL SPECIFIC EXPRESSION ------------------------------------------------
-bp.res <- readRDS(file = "~/MDPhD/oncology/BayesPrismLUAD/Data/bp_res.rds")
-cell_types <- rownames(bp.res@Post.ini.cs@theta)
-for(cell_type in cell_types){
-  saveRDS(reconstruct_Z_ct_initial(InstaPrism_obj = bp.res, cell.type.of.interest = cell_type), 
-          file = paste0("~/MDPhD/oncology/BayesPrismLUAD/Data/cell_specific_expression/", cell_type, "_specific_expression.rds"))
-  print(0)
-}
-
-
-# RUN BAYESPRISM WITH HIGHER RESOLUTION -----------------------------------
-sc_dat <- readRDS(file = "~/MDPhD/oncology/BayesPrismLUAD/Data/GSE131907_Lung_Cancer_raw_UMI_matrix_filter.rds")
-count_data <- readRDS(file = "~/MDPhD/oncology/scRNAseqLUAD/savedData/bulk_count_data.rds")
-Kim_Lee_cell_annot <- readRDS( file = "~/MDPhD/oncology/BayesPrismLUAD/Data/Kim_Lee_cell_annot.rds")
-
-shared_genes <- intersect(colnames(sc_dat), rownames(count_data))
-count_data <- count_data[shared_genes,]
-count_data <- t(count_data)
-sc_dat <- sc_dat[,shared_genes]
+#filter-out the undetermined cells:
+Kim_Lee_cell_annot <- Kim_Lee_cell_annot[Kim_Lee_cell_annot$Cell_subtype != "Undetermined",]
+Kim_Lee_cell_annot$Cell_subtype[Kim_Lee_cell_annot$Cell_type == "Epithelial cells"] <- "Epithelial cells"
 sc_dat <- sc_dat[rownames(Kim_Lee_cell_annot),]
 
 cell.type.labels <- Kim_Lee_cell_annot[rownames(sc_dat),'Cell_subtype']
 cell.state.labels <- Kim_Lee_cell_annot[rownames(sc_dat),'Cell_subtype']
 
-tumor_cells <- c("tS1","tS2","tS3")
-cell.type.labels[cell.type.labels %in% tumor_cells] <- "tumor"
-cell.state.labels[cell.state.labels %in% tumor_cells] <- "tumor"
-
-sc.dat.filtered <- cleanup.genes (input=sc_dat,
-                                  input.type="count.matrix",
-                                  species="hs",
-                                  gene.group=c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY") ,
-                                  exp.cells=5)
+sc.dat.filtered <- cleanup.genes (input = sc_dat,
+                                  input.type = "count.matrix",
+                                  species = "hs",
+                                  gene.group = c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY") ,
+                                  exp.cells = 5)
 
 plot.bulk.vs.sc (sc.input = sc.dat.filtered,
                  bulk.input = count_data)
@@ -210,13 +130,30 @@ myPrism <- new.prism(
   input.type="count.matrix",
   cell.type.labels = cell.type.labels,
   cell.state.labels = cell.state.labels,
-  key="tumor",
+  key="Epithelial cells",
   outlier.cut=0.01,
   outlier.fraction=0.1,
 )
-saveRDS(myPrism, file = "~/MDPhD/oncology/BayesPrismLUAD/Data/my_prism_luad_high_res.rds")
+
+#for high-resolution cell type classification:
+saveRDS(myPrism, file = "~/MDPhD/oncology/BayesPrismLUAD/Data/my_prism_luad_high_res_cells.rds")
+
+#for low-resolution cell type classification:
+saveRDS(myPrism, file = "~/MDPhD/oncology/BayesPrismLUAD/Data/my_prism_luad.rds")
 
 # RUN FAST BAYESPRISM -----------------------------------------------------
-myPrism <- readRDS(file = "~/MDPhD/oncology/BayesPrismLUAD/Data/my_prism_luad_high_res.rds")
-bp.res_high_res <- InstaPrism(input_type = 'prism',prismObj = myPrism)
-saveRDS(bp.res_high_res,file = "~/MDPhD/oncology/BayesPrismLUAD/Data/bp.res_high_res.rds")
+# myPrism <- readRDS(file = "~/MDPhD/oncology/BayesPrismLUAD/Data/my_prism_luad.rds")
+myPrism <- readRDS(file = "~/MDPhD/oncology/BayesPrismLUAD/Data/my_prism_luad_high_res_cells.rds")
+bp.res <- InstaPrism(input_type = 'prism',prismObj = myPrism)
+#bp.res <- run.prism(prism = myPrism, n.cores=8)
+saveRDS(bp.res,file = "~/MDPhD/oncology/BayesPrismLUAD/Data/bp_res_high_res_cells.rds")
+
+# CELL SPECIFIC EXPRESSION ------------------------------------------------
+bp.res <- readRDS(file = "~/MDPhD/oncology/BayesPrismLUAD/Data/bp_res_high_res_cells.rds")
+cell_types <- rownames(bp.res@Post.ini.cs@theta)
+for(cell_type in cell_types){
+  print(cell_type)
+  saveRDS(reconstruct_Z_ct_initial(InstaPrism_obj = bp.res, cell.type.of.interest = cell_type), 
+          file = paste0("~/MDPhD/oncology/BayesPrismLUAD/Data/cell_specific_expression/", str_replace(cell_type, "/",""), "_specific_expression_high_res_cells.rds"))
+}
+
